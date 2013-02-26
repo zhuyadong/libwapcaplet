@@ -7,10 +7,11 @@
 
 typedef struct memory_pool_s
 {
-  void *pool;
-  void *empty_blocks;
-  size_t block_size;
-  size_t count;
+	void *pool;
+	void *empty_blocks;
+	size_t block_size;
+	size_t count;
+	bool ocm;
 } __attribute__ ((__aligned__)) memory_pool_t;
 
 memory_pool_t * memory_pool_create(size_t bs, size_t c);

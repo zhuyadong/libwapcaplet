@@ -16,46 +16,50 @@ struct OCMIFace *IOCM = NULL;
 
 memory_pool_t * memory_pool_create(size_t bs, size_t c)
 {
-  memory_pool_t *mp = malloc(sizeof(memory_pool_t));
-  if (!mp)
-    return NULL;
+	memory_pool_t *mp = malloc(sizeof(memory_pool_t));
+	if (!mp) return NULL;
 
-  mp->block_size = bs;
-  mp->count = c;
+	mp->block_size = bs;
+	mp->count = c;
 	mp->pool = NULL;
 
+#ifdef __amigaos4__
+	/* NB: This *always* allocates 64K, requests for more than 64K *must not*
+	 * be passed to this function. */
 	if((ocmb = IExec->OpenResource("onchipmem.resource"))) {
 		if((IOCM = (struct OCMIFace *)IExec->GetInterface((struct Library *)ocmb, "main", 1, NULL))) {
 			mp->pool = IOCM->ObtainOnChipMem();
+			mp->ocm = true;
 		}
 	}
+#endif
 
 	if(mp->pool == NULL) {
 		mp->pool = malloc((mp->block_size + sizeof(void *)) * mp->count);
+		mp->ocm = false;
 	}
 
-  memory_pool_clear(mp);
+	memory_pool_clear(mp);
+	mp->empty_blocks = mp->pool;
 
-  mp->empty_blocks = mp->pool;
-
-  return mp;
+	return mp;
 }
 
 void memory_pool_destroy(memory_pool_t *mp)
 {
-  if (!mp)
-    return;
+	if (!mp) return;
 
-  memory_pool_clear(mp);
+	memory_pool_clear(mp);
 
-/**TODO: Track if this is an OCM or standard memory pool.
- *	At the moment we have no way of freeing on exit so it doesn't matter.
- 
-	IOCM->ReleaseOnChipMem();
-	IExec->DropInterface((struct Interface *)IOCM);
-	free(mp->pool);
-*/
-  free(mp);
+	if(mp->ocm == true) {
+#ifdef __amigaos4__
+		IOCM->ReleaseOnChipMem();
+		IExec->DropInterface((struct Interface *)IOCM);
+#endif
+	} else {
+		free(mp->pool);
+	}
+	free(mp);
 }
 
 void memory_pool_clear(memory_pool_t *mp)
