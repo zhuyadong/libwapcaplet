@@ -97,7 +97,7 @@ void memory_pool_dump(memory_pool_t *mp, void (* print_func) (void *value))
   {
     block = (void *) ((uint8_t *) mp->pool + (mp->block_size * i) +
                       sizeof(void *) * i);
-    next = (void **) ((uint8_t *) block + sizeof(void *));
+    next = (void **) ((uint8_t *) block + mp->block_size);
 
     printf("block #%i(%p):", i, block);
 

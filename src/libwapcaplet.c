@@ -72,7 +72,7 @@ static void *str_alloc(void)
 		}
 
 		if((p = memory_pool_alloc(mp[i]))) {
-			if(p != NULL) return p;
+			return p;
 		}
 	}
 	return NULL; /* out of memory pools */
