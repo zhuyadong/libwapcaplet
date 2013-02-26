@@ -12,6 +12,11 @@
 
 #include "libwapcaplet/libwapcaplet.h"
 
+#ifdef __amigaos4__
+#include <proto/exec.h>
+#include <proto/onchipmem.h>
+#endif
+
 #ifndef UNUSED
 #define UNUSED(x) ((x) = (x))
 #endif
@@ -46,6 +51,51 @@ static lwc_context *ctx = NULL;
 #define LWC_ALLOC(s) malloc(s)
 #define LWC_FREE(p) free(p)
 
+#ifndef __amigaos4__
+#define LWC_ALLOC_BUCKET(s) malloc(s)
+#define LWC_FREE_BUCKET(p) free(p)
+#else
+#define LWC_ALLOC_BUCKET(s) onchipmem_malloc(s)
+#define LWC_FREE_BUCKET(p) onchipmem_free(p)
+
+struct Library *ocmb;
+struct OCMIFace *IOCM = NULL;
+bool using_onchipmem;
+
+void *onchipmem_malloc(int s);
+void onchipmem_free(void *p);
+
+void *onchipmem_malloc(int s)
+{
+	/* NB: If using OCM this always allocates 64K, ie. a bucket size of 16384 */
+	uint8 *ocm = NULL;
+
+	if((ocmb = IExec->OpenResource("onchipmem.resource"))) {
+		if((IOCM = (struct OCMIFace *)IExec->GetInterface((struct Library *)ocmb, "main", 1, NULL))) {
+			ocm = (uint8 *)IOCM->ObtainOnChipMem();
+		}
+	}
+
+	if(ocm == NULL) {
+		ocm = malloc(s);
+		using_onchipmem = false;
+	} else {
+		using_onchipmem = true;
+	}
+	return ocm;
+}
+
+void onchipmem_free(void *p)
+{
+	if(using_onchipmem == true) {
+		IOCM->ReleaseOnChipMem();
+		IExec->DropInterface((struct Interface *)IOCM);
+	} else {
+		free(p);
+	}
+}
+#endif
+
 typedef lwc_hash (*lwc_hasher)(const char *, size_t);
 typedef int (*lwc_strncmp)(const char *, const char *, size_t);
 typedef void (*lwc_memcpy)(char *, const char *, size_t);
@@ -64,10 +114,10 @@ lwc__initialise(void)
         memset(ctx, 0, sizeof(lwc_context));
         
         ctx->bucketcount = NR_BUCKETS_DEFAULT;
-        ctx->buckets = LWC_ALLOC(sizeof(lwc_string *) * ctx->bucketcount);
+        ctx->buckets = LWC_ALLOC_BUCKET(sizeof(lwc_string *) * ctx->bucketcount);
         
         if (ctx->buckets == NULL) {
-                LWC_FREE(ctx);
+                LWC_FREE_BUCKET(ctx);
 		ctx = NULL;
                 return lwc_error_oom;
         }
