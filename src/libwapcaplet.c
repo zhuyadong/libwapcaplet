@@ -10,12 +10,8 @@
 #include <string.h>
 #include <assert.h>
 
+#include "mempool.h"
 #include "libwapcaplet/libwapcaplet.h"
-
-#ifdef __amigaos4__
-#include <proto/exec.h>
-#include <proto/onchipmem.h>
-#endif
 
 #ifndef UNUSED
 #define UNUSED(x) ((x) = (x))
@@ -36,10 +32,12 @@ lwc__calculate_hash(const char *str, size_t len)
 	return z;
 }
 
-#define STR_OF(str) ((char *)(str + 1))
-#define CSTR_OF(str) ((const char *)(str + 1))
+#define STR_OF(str) ((char *)(str->string))
+#define CSTR_OF(str) ((const char *)(str->string))
 
 #define NR_BUCKETS_DEFAULT	(4091)
+#define MAX_MEM_POOLS 2
+#define MEM_POOL_BLOCKS (65536) / (sizeof(lwc_string) + sizeof(void *))
 
 typedef struct lwc_context_s {
         lwc_string **		buckets;
@@ -50,55 +48,45 @@ static lwc_context *ctx = NULL;
 
 #define LWC_ALLOC(s) malloc(s)
 #define LWC_FREE(p) free(p)
+#define LWC_ALLOC_STR() str_alloc()
+#define LWC_FREE_STR(p) str_free(p)
 
-#ifndef __amigaos4__
-#define LWC_ALLOC_BUCKET(s) malloc(s)
-#define LWC_FREE_BUCKET(p) free(p)
-#else
-#define LWC_ALLOC_BUCKET(s) onchipmem_malloc(s)
-#define LWC_FREE_BUCKET(p) onchipmem_free(p)
-
-struct Library *ocmb;
-struct OCMIFace *IOCM = NULL;
-bool using_onchipmem;
-
-void *onchipmem_malloc(int s);
-void onchipmem_free(void *p);
-
-void *onchipmem_malloc(int s)
-{
-	/* NB: If using OCM this always allocates 64K, ie. a bucket size of 16384 */
-	uint8 *ocm = NULL;
-
-	if((ocmb = IExec->OpenResource("onchipmem.resource"))) {
-		if((IOCM = (struct OCMIFace *)IExec->GetInterface((struct Library *)ocmb, "main", 1, NULL))) {
-			ocm = (uint8 *)IOCM->ObtainOnChipMem();
-		}
-	}
-
-	if(ocm == NULL) {
-		ocm = malloc(s);
-		using_onchipmem = false;
-	} else {
-		using_onchipmem = true;
-	}
-	return ocm;
-}
-
-void onchipmem_free(void *p)
-{
-	if(using_onchipmem == true) {
-		IOCM->ReleaseOnChipMem();
-		IExec->DropInterface((struct Interface *)IOCM);
-	} else {
-		free(p);
-	}
-}
-#endif
+memory_pool_t *mp[MAX_MEM_POOLS] = { NULL, NULL };
 
 typedef lwc_hash (*lwc_hasher)(const char *, size_t);
 typedef int (*lwc_strncmp)(const char *, const char *, size_t);
 typedef void (*lwc_memcpy)(char *, const char *, size_t);
+
+static void *str_alloc(void);
+static void str_free(void *p);
+
+static void *str_alloc(void)
+{
+	void *p;
+	int i;
+	
+	for(i = 0; i < MAX_MEM_POOLS; i++) {
+		if(mp[i] == NULL) {
+			mp[i] = memory_pool_create(sizeof(lwc_string), MEM_POOL_BLOCKS);
+			if(mp[i] == NULL) return NULL; /* out of memory */
+		}
+
+		if((p = memory_pool_alloc(mp[i]))) {
+			return p;
+		}
+	}
+	return NULL; /* out of memory pools */
+}
+
+static void str_free(void *p)
+{
+	int i;
+
+	for(i = 0; i < MAX_MEM_POOLS; i++) {
+		if(memory_pool_free(mp[i], p))
+			return;
+	}
+}
 
 static lwc_error
 lwc__initialise(void)
@@ -114,10 +102,10 @@ lwc__initialise(void)
         memset(ctx, 0, sizeof(lwc_context));
         
         ctx->bucketcount = NR_BUCKETS_DEFAULT;
-        ctx->buckets = LWC_ALLOC_BUCKET(sizeof(lwc_string *) * ctx->bucketcount);
+        ctx->buckets = LWC_ALLOC(sizeof(lwc_string *) * ctx->bucketcount);
         
         if (ctx->buckets == NULL) {
-                LWC_FREE_BUCKET(ctx);
+                LWC_FREE(ctx);
 		ctx = NULL;
                 return lwc_error_oom;
         }
@@ -163,12 +151,16 @@ lwc__intern(const char *s, size_t slen,
                 str = str->next;
         }
         
-        /* Add one for the additional NUL. */
-        *ret = str = LWC_ALLOC(sizeof(lwc_string) + slen + 1);
+        *ret = str = LWC_ALLOC_STR();
         
         if (str == NULL)
                 return lwc_error_oom;
-        
+
+        /* Add one for the additional NUL. */				
+        str->string = LWC_ALLOC(slen + 1);
+        if (str->string == NULL)
+                return lwc_error_oom;
+				
         str->prevptr = &(ctx->buckets[bucket]);
         str->next = ctx->buckets[bucket];
         if (str->next != NULL)
@@ -230,7 +222,8 @@ lwc_string_destroy(lwc_string *str)
         memset(str, 0xA5, sizeof(*str) + str->len);
 #endif
         
-        LWC_FREE(str);
+        LWC_FREE_STR(str);
+        LWC_FREE(STR_OF(str));
 }
 
 /**** Shonky caseless bits ****/

@@ -43,6 +43,7 @@ typedef struct lwc_string_s {
         lwc_hash	hash;
         lwc_refcounter	refcnt;
         struct lwc_string_s *	insensitive;
+		char *string;
 } lwc_string;
 	
 /**
@@ -215,7 +216,7 @@ lwc__intern_caseless_string(lwc_string *str);
  *	 in future.  Any code relying on it currently should be
  *	 modified to use ::lwc_string_length if possible.
  */
-#define lwc_string_data(str) ((const char *)((str)+1))
+#define lwc_string_data(str) ((const char *)((str)->string))
 
 /**
  * Retrieve the data length for an interned string.
