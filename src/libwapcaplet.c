@@ -36,7 +36,6 @@ lwc__calculate_hash(const char *str, size_t len)
 #define CSTR_OF(str) ((const char *)(str->string))
 
 #define NR_BUCKETS_DEFAULT	(4091)
-#define MAX_MEM_POOLS 2
 #define MEM_POOL_BLOCKS (65536) / (sizeof(lwc_string) + sizeof(void *))
 
 typedef struct lwc_context_s {
@@ -51,7 +50,7 @@ static lwc_context *ctx = NULL;
 #define LWC_ALLOC_STR() str_alloc()
 #define LWC_FREE_STR(p) str_free(p)
 
-memory_pool_t *mp[MAX_MEM_POOLS] = { NULL, NULL };
+memory_pool_t *mp = NULL;
 
 typedef lwc_hash (*lwc_hasher)(const char *, size_t);
 typedef int (*lwc_strncmp)(const char *, const char *, size_t);
@@ -63,29 +62,37 @@ static void str_free(void *p);
 static void *str_alloc(void)
 {
 	void *p;
-	int i;
-	
-	for(i = 0; i < MAX_MEM_POOLS; i++) {
-		if(mp[i] == NULL) {
-			mp[i] = memory_pool_create(sizeof(lwc_string), MEM_POOL_BLOCKS);
-			if(mp[i] == NULL) return NULL; /* out of memory */
-		}
+	memory_pool_t *mpc;
 
-		if((p = memory_pool_alloc(mp[i]))) {
+	if(mp == NULL) {
+		mp = memory_pool_create(sizeof(lwc_string), MEM_POOL_BLOCKS);
+		if(mp == NULL) return NULL; /* out of memory */
+	}
+
+	mpc = mp;
+
+	do {
+		if((p = memory_pool_alloc(mpc))) {
 			return p;
 		}
-	}
-	return NULL; /* out of memory pools */
+
+		if(mpc->next == NULL) {
+			mpc->next = memory_pool_create(sizeof(lwc_string), MEM_POOL_BLOCKS);
+			if(mpc->next == NULL) return NULL; /* out of memory */
+		}
+	} while((mpc = mpc->next));
+
+	return NULL; /* should never get here */
 }
 
 static void str_free(void *p)
 {
-	int i;
+	memory_pool_t *mpc = mp;
 
-	for(i = 0; i < MAX_MEM_POOLS; i++) {
-		if(memory_pool_free(mp[i], p))
+	do {
+		if(memory_pool_free(mpc, p))
 			return;
-	}
+	}while((mpc = mpc->next));
 }
 
 static lwc_error

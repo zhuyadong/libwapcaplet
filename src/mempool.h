@@ -12,6 +12,7 @@ typedef struct memory_pool_s
 	size_t block_size;
 	size_t count;
 	bool ocm;
+	void *next;
 } __attribute__ ((__aligned__)) memory_pool_t;
 
 memory_pool_t * memory_pool_create(size_t bs, size_t c);

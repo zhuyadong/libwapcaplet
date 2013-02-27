@@ -22,6 +22,7 @@ memory_pool_t * memory_pool_create(size_t bs, size_t c)
 	mp->block_size = bs;
 	mp->count = c;
 	mp->pool = NULL;
+	mp->next = NULL;
 
 #ifdef __amigaos4__
 	/* NB: This *always* allocates 64K, requests for more than 64K *must not*
