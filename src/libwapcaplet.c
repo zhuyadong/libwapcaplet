@@ -41,6 +41,7 @@ lwc__calculate_hash(const char *str, size_t len)
 typedef struct lwc_context_s {
         lwc_string **		buckets;
         lwc_hash		bucketcount;
+		memory_pool_t *	mp;
 } lwc_context;
 
 static lwc_context *ctx = NULL;
@@ -50,49 +51,48 @@ static lwc_context *ctx = NULL;
 #define LWC_ALLOC_STR() str_alloc()
 #define LWC_FREE_STR(p) str_free(p)
 
-memory_pool_t *mp = NULL;
-
 typedef lwc_hash (*lwc_hasher)(const char *, size_t);
 typedef int (*lwc_strncmp)(const char *, const char *, size_t);
 typedef void (*lwc_memcpy)(char *, const char *, size_t);
 
 static void *str_alloc(void);
 static void str_free(void *p);
+void lwc__exit(void) __attribute__((destructor));
 
 static void *str_alloc(void)
 {
 	void *p;
-	memory_pool_t *mpc;
+	memory_pool_t *mp;
 
-	if(mp == NULL) {
-		mp = memory_pool_create(sizeof(lwc_string), MEM_POOL_BLOCKS);
-		if(mp == NULL) return NULL; /* out of memory */
+	if(ctx->mp == NULL) {
+		ctx->mp = memory_pool_create(sizeof(lwc_string), MEM_POOL_BLOCKS);
+		if(ctx->mp == NULL) return NULL; /* out of memory */
 	}
 
-	mpc = mp;
+	mp = ctx->mp;
 
 	do {
-		if((p = memory_pool_alloc(mpc))) {
+		if((p = memory_pool_alloc(mp))) {
 			return p;
 		}
 
-		if(mpc->next == NULL) {
-			mpc->next = memory_pool_create(sizeof(lwc_string), MEM_POOL_BLOCKS);
-			if(mpc->next == NULL) return NULL; /* out of memory */
+		if(mp->next == NULL) {
+			mp->next = memory_pool_create(sizeof(lwc_string), MEM_POOL_BLOCKS);
+			if(mp->next == NULL) return NULL; /* out of memory */
 		}
-	} while((mpc = mpc->next));
+	} while((mp = mp->next));
 
 	return NULL; /* should never get here */
 }
 
 static void str_free(void *p)
 {
-	memory_pool_t *mpc = mp;
+	memory_pool_t *mp = ctx->mp;
 
 	do {
-		if(memory_pool_free(mpc, p))
+		if(memory_pool_free(mp, p))
 			return;
-	}while((mpc = mpc->next));
+	}while((mp = mp->next));
 }
 
 static lwc_error
@@ -305,4 +305,33 @@ lwc_iterate_strings(lwc_iteration_callback_fn cb, void *pw)
                 for (str = ctx->buckets[n]; str != NULL; str = str->next)
                         cb(str, pw);
         }
+}
+
+/**** Cleanup ****/
+
+static void lwc__free_strings(lwc_string *str, void *pw)
+{
+	UNUSED(pw);
+	
+	LWC_FREE(STR_OF(str));
+	LWC_FREE_STR(str);
+}
+
+void lwc__exit(void)
+{
+	memory_pool_t *mp_next = NULL;
+	memory_pool_t *mp = ctx->mp;
+
+	lwc_iterate_strings(lwc__free_strings, NULL);
+	
+	do {
+		if((mp != NULL)) {
+			mp_next = mp->next;
+			memory_pool_destroy(mp);
+		}
+
+	} while((mp = mp_next));
+	
+	LWC_FREE(ctx->buckets);
+	LWC_FREE(ctx);
 }
