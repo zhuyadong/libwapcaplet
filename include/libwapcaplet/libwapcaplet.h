@@ -133,7 +133,25 @@ extern lwc_error lwc_string_tolower(lwc_string *str, lwc_string **ret);
  * @note Use this if copying the string and intending both sides to retain
  * ownership.
  */
+#ifdef _WIN32
+static inline lwc_string* lwc_string_ref(lwc_string *str)
+{
+	assert(str != NULL);
+	++str->refcnt;
+	return str;
+}
+#else
 #define lwc_string_ref(str) ({lwc_string *__lwc_s = (str); assert(__lwc_s != NULL); __lwc_s->refcnt++; __lwc_s;})
+#endif
+
+/**
+ * Destroy an unreffed lwc_string.
+ *
+ * This destroys an lwc_string whose reference count indicates that it should be.
+ *
+ * @param str The string to unref.
+ */
+extern void lwc_string_destroy(lwc_string *str);
 
 /**
  * Release a reference on an lwc_string.
@@ -146,6 +164,16 @@ extern lwc_error lwc_string_tolower(lwc_string *str, lwc_string **ret);
  *       freed. (Ref count of 1 where string is its own insensitve match
  *       will also result in the string being freed.)
  */
+#ifdef _WIN32
+static inline void lwc_string_unref(lwc_string *str)
+{
+	assert(str != NULL);
+	--str->refcnt;
+	if (str->refcnt == 0 ||
+		((str->refcnt == 1) && (str->insensitive == str)))
+		lwc_string_destroy(str);
+}
+#else
 #define lwc_string_unref(str) {						\
 		lwc_string *__lwc_s = (str);				\
 		assert(__lwc_s != NULL);				\
@@ -154,15 +182,7 @@ extern lwc_error lwc_string_tolower(lwc_string *str, lwc_string **ret);
 		    ((__lwc_s->refcnt == 1) && (__lwc_s->insensitive == __lwc_s)))	\
 			lwc_string_destroy(__lwc_s);				\
 	}
-	
-/**
- * Destroy an unreffed lwc_string.
- *
- * This destroys an lwc_string whose reference count indicates that it should be.
- *
- * @param str The string to unref.
- */
-extern void lwc_string_destroy(lwc_string *str);
+#endif	
 
 /**
  * Check if two interned strings are equal.
@@ -177,6 +197,20 @@ extern void lwc_string_destroy(lwc_string *str);
 	((*(ret) = ((str1) == (str2))), lwc_error_ok)
 
 /**
+ * Intern a caseless copy of the passed string.
+ *
+ * @param str The string to intern the caseless copy of.
+ *
+ * @return    lwc_error_ok if successful, otherwise the
+ *            error code describing the issue.,
+ *
+ * @note This is for "internal" use by the caseless comparison
+ *       macro and not for users.
+ */	
+extern lwc_error
+lwc__intern_caseless_string(lwc_string *str);
+	
+/**
  * Check if two interned strings are case-insensitively equal.
  *
  * @param _str1 The first string in the comparison.
@@ -185,6 +219,25 @@ extern void lwc_string_destroy(lwc_string *str);
  * @return Result of operation, if not ok then value pointed to by \a ret will
  *	    not be valid.
  */
+#ifdef _WIN32
+static inline lwc_error lwc_string_caseless_isequal(lwc_string *_str1, lwc_string *_str2, bool *_ret)
+{                
+	lwc_error __lwc_err = lwc_error_ok;
+	lwc_string *__lwc_str1 = (_str1);
+	lwc_string *__lwc_str2 = (_str2);
+	bool *__lwc_ret = (_ret);
+
+	if (__lwc_str1->insensitive == NULL) {
+		__lwc_err = lwc__intern_caseless_string(__lwc_str1);
+	}
+	if (__lwc_err == lwc_error_ok && __lwc_str2->insensitive == NULL) {
+		__lwc_err = lwc__intern_caseless_string(__lwc_str2);
+	}
+	if (__lwc_err == lwc_error_ok)
+		*__lwc_ret = (__lwc_str1->insensitive == __lwc_str2->insensitive);
+	return __lwc_err;
+}
+#else
 #define lwc_string_caseless_isequal(_str1,_str2,_ret) ({                \
             lwc_error __lwc_err = lwc_error_ok;                         \
             lwc_string *__lwc_str1 = (_str1);                           \
@@ -201,21 +254,8 @@ extern void lwc_string_destroy(lwc_string *str);
                 *__lwc_ret = (__lwc_str1->insensitive == __lwc_str2->insensitive); \
             __lwc_err;                                                  \
         })
-	
-/**
- * Intern a caseless copy of the passed string.
- *
- * @param str The string to intern the caseless copy of.
- *
- * @return    lwc_error_ok if successful, otherwise the
- *            error code describing the issue.,
- *
- * @note This is for "internal" use by the caseless comparison
- *       macro and not for users.
- */	
-extern lwc_error
-lwc__intern_caseless_string(lwc_string *str);
-	
+#endif	
+
 /**
  * Retrieve the data pointer for an interned string.
  *
@@ -228,7 +268,11 @@ lwc__intern_caseless_string(lwc_string *str);
  *	 in future.  Any code relying on it currently should be
  *	 modified to use ::lwc_string_length if possible.
  */
+#if _WIN32
+#define lwc_string_data(str) ((const char *)((str)+1))
+#else
 #define lwc_string_data(str) ({assert(str != NULL); (const char *)((str)+1);})
+#endif
 
 /**
  * Retrieve the data length for an interned string.
@@ -236,7 +280,11 @@ lwc__intern_caseless_string(lwc_string *str);
  * @param str The string to retrieve the length of.
  * @return    The length of \a str.
  */
+#ifdef _WIN32
+#define lwc_string_length(str) ((str)->len)
+#else
 #define lwc_string_length(str) ({assert(str != NULL); (str)->len;})
+#endif
 
 /**
  * Retrieve (or compute if unavailable) a hash value for the content of the string.
@@ -250,8 +298,11 @@ lwc__intern_caseless_string(lwc_string *str);
  *	 to be stable between invocations of the program. Never use the hash
  *	 value as a way to directly identify the value of the string.
  */
+#ifdef _WIN32
+#define lwc_string_hash_value(str) ((str)->hash)
+#else
 #define lwc_string_hash_value(str) ({assert(str != NULL); (str)->hash;})
-
+#endif
 /**
  * Retrieve a hash value for the caseless content of the string.
  *
